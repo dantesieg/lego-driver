@@ -10,7 +10,7 @@ import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.WindowInsets
-import android.view.WindowInsetsController
+import android.widget.FrameLayout
 import android.view.WindowManager
 import kotlin.math.abs
 import kotlin.math.max
@@ -25,11 +25,17 @@ class MainActivity : Activity(), Driver.Ui, DriveView.Actions, InputManager.Inpu
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         view = DriveView(this, this)
-        setContentView(view)
-        window.insetsController?.apply {
-            hide(WindowInsets.Type.systemBars())
-            systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        // Edge-to-edge is enforced: keep the system bars visible and pad the UI clear of them.
+        val root = FrameLayout(this).apply {
+            setBackgroundColor(0xFF15171A.toInt())
+            addView(view)
+            setOnApplyWindowInsetsListener { v, insets ->
+                val i = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+                v.setPadding(i.left, i.top, i.right, i.bottom)
+                WindowInsets.CONSUMED
+            }
         }
+        setContentView(root)
         driver = Driver.get(this)
         getSystemService(InputManager::class.java).registerInputDeviceListener(this, null)
     }

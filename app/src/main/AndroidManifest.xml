@@ -11,7 +11,7 @@
     <application
         android:label="Flip Driver"
         android:icon="@drawable/ic_launcher"
-        android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen">
+        android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
         <activity
             android:name=".MainActivity"
             android:exported="true"
