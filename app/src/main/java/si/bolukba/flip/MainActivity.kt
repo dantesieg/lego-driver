@@ -117,6 +117,20 @@ class MainActivity : Activity(), Hub.Listener, DriveView.Actions, Choreographer.
             left = -ly
             right = -ry
         }
+        // D-pad buttons override the sticks: up/down drive, left/right turn.
+        val t = (if (dUp || hatY < -0.5f) 1f else 0f) - (if (dDown || hatY > 0.5f) 1f else 0f)
+        val st = (if (dRight || hatX > 0.5f) 1f else 0f) - (if (dLeft || hatX < -0.5f) 1f else 0f)
+        if (t != 0f || st != 0f) {
+            if (t == 0f) {
+                // Turn on the spot.
+                left = st
+                right = -st
+            } else {
+                // Curve: the inner track slows down.
+                left = if (st < 0f) t * TURN_INNER else t
+                right = if (st > 0f) t * TURN_INNER else t
+            }
+        }
         if (left == 0f && right == 0f) {
             left = view.touchLeft
             right = view.touchRight
@@ -243,15 +257,34 @@ class MainActivity : Activity(), Hub.Listener, DriveView.Actions, Choreographer.
         l2 = max(axis(e, MotionEvent.AXIS_LTRIGGER), axis(e, MotionEvent.AXIS_BRAKE))
         r2 = max(axis(e, MotionEvent.AXIS_RTRIGGER), axis(e, MotionEvent.AXIS_GAS))
         // D-pad on many pads arrives as a hat axis.
-        val hatY = e.getAxisValue(MotionEvent.AXIS_HAT_Y)
-        if (hatY != lastHatY) {
-            if (hatY < -0.5f) onSpeed(speed + 1) else if (hatY > 0.5f) onSpeed(speed - 1)
-            lastHatY = hatY
+        hatX = e.getAxisValue(MotionEvent.AXIS_HAT_X)
+        hatY = e.getAxisValue(MotionEvent.AXIS_HAT_Y)
+        return true
+    }
+
+    private var hatX = 0f
+    private var hatY = 0f
+    private var dUp = false
+    private var dDown = false
+    private var dLeft = false
+    private var dRight = false
+
+    /** Tracks held D-pad keys; returns false for other keys. */
+    private fun dpad(keyCode: Int, down: Boolean): Boolean {
+        when (keyCode) {
+            KeyEvent.KEYCODE_DPAD_UP -> dUp = down
+            KeyEvent.KEYCODE_DPAD_DOWN -> dDown = down
+            KeyEvent.KEYCODE_DPAD_LEFT -> dLeft = down
+            KeyEvent.KEYCODE_DPAD_RIGHT -> dRight = down
+            else -> return false
         }
         return true
     }
 
-    private var lastHatY = 0f
+    override fun onKeyUp(keyCode: Int, e: KeyEvent): Boolean {
+        if (isPad(e.device) && dpad(keyCode, false)) return true
+        return super.onKeyUp(keyCode, e)
+    }
 
     private fun axis(e: MotionEvent, a: Int): Float {
         val range = e.device?.getMotionRange(a, e.source) ?: return 0f
@@ -265,7 +298,7 @@ class MainActivity : Activity(), Hub.Listener, DriveView.Actions, Choreographer.
     override fun onKeyDown(keyCode: Int, e: KeyEvent): Boolean {
         if (!isPad(e.device)) return super.onKeyDown(keyCode, e)
         if (pad?.id != e.deviceId) findPad()
-        if (e.repeatCount > 0) return true
+        if (dpad(keyCode, true) || e.repeatCount > 0) return true
         when (keyCode) {
             KeyEvent.KEYCODE_BUTTON_L1 -> onSpin(-1)
             KeyEvent.KEYCODE_BUTTON_R1 -> onSpin(1)
@@ -277,8 +310,7 @@ class MainActivity : Activity(), Hub.Listener, DriveView.Actions, Choreographer.
                 view.invalidate()
                 rumble(40)
             }
-            KeyEvent.KEYCODE_BUTTON_Y, KeyEvent.KEYCODE_DPAD_UP -> onSpeed(if (keyCode == KeyEvent.KEYCODE_BUTTON_Y) (speed + 1) % 3 else speed + 1)
-            KeyEvent.KEYCODE_DPAD_DOWN -> onSpeed(speed - 1)
+            KeyEvent.KEYCODE_BUTTON_Y -> onSpeed((speed + 1) % 3)
             KeyEvent.KEYCODE_BUTTON_START -> onScan()
             else -> return super.onKeyDown(keyCode, e)
         }
@@ -295,6 +327,7 @@ class MainActivity : Activity(), Hub.Listener, DriveView.Actions, Choreographer.
         private val SPEEDS = intArrayOf(40, 70, 100)
         private const val SPIN_ADJUST = 55
         private const val DEADZONE = 0.08f
+        private const val TURN_INNER = 0.3f
 
         private fun angleDiff(a: Int, b: Int): Int {
             var x = (a - b) % 360
