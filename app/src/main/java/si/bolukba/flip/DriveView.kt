@@ -64,17 +64,34 @@ class DriveView(ctx: Context, private val actions: Actions) : View(ctx) {
 
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
         val pad = 24 * d
-        val top = 64 * d
         val sw = 96 * d
+        val cx = w / 2f
+        // Speed segment row sits below the status visuals (bars end ~190dp) in both layouts.
+        val segW = 80 * d
+        if (h > w) {
+            // Portrait: status and speed on top, sliders in the bottom half with the action buttons between them.
+            val top = h * 0.5f
+            sliderL.set(pad, top, pad + sw, h - pad)
+            sliderR.set(w - pad - sw, top, w - pad, h - pad)
+            val bl = sliderL.right + 12 * d
+            val br = sliderR.left - 12 * d
+            val bh = 56 * d
+            spinL.set(bl, top, br, top + bh)
+            spinR.set(bl, spinL.bottom + 12 * d, br, spinL.bottom + 12 * d + bh)
+            stopBtn.set(bl, h - pad - bh, br, h - pad)
+            val segTop = 220 * d
+            for (i in 0..2) speedBtns[i].set(cx - segW * 1.5f + segW * i, segTop, cx - segW * 1.5f + segW * (i + 1), segTop + 44 * d)
+            scanBtn.set(cx - 90 * d, h * 0.58f, cx + 90 * d, h * 0.58f + 52 * d)
+            return
+        }
+        val top = 64 * d
         sliderL.set(pad, top, pad + sw, h - pad)
         sliderR.set(w - pad - sw, top, w - pad, h - pad)
-        val cx = w / 2f
         val bw = 120 * d
         val bh = 56 * d
         spinL.set(cx - bw - 8 * d, h - pad - bh * 2 - 12 * d, cx - 8 * d, h - pad - bh - 12 * d)
         spinR.set(cx + 8 * d, spinL.top, cx + bw + 8 * d, spinL.bottom)
         stopBtn.set(spinL.left, h - pad - bh, spinR.right, h - pad)
-        val segW = 80 * d
         val segTop = spinL.top - 60 * d
         for (i in 0..2) speedBtns[i].set(cx - segW * 1.5f + segW * i, segTop, cx - segW * 1.5f + segW * (i + 1), segTop + 44 * d)
         scanBtn.set(cx - 90 * d, h * 0.62f, cx + 90 * d, h * 0.62f + 52 * d)
@@ -103,7 +120,7 @@ class DriveView(ctx: Context, private val actions: Actions) : View(ctx) {
         var x = width - 24 * d
         x = chip(c, x, y, if (battery >= 0) "$battery%" else "—", text)
         x = chip(c, x, y, padName?.let { if (arcade) "$it · arcade" else "$it · tank" } ?: "No controller", if (padName != null) accent else muted)
-        if (connected && rssi != 0) chip(c, x, y, "$rssi dBm", muted)
+        if (connected && rssi != 0 && width > height) chip(c, x, y, "$rssi dBm", muted)
     }
 
     /** Draws a pill ending at [right]; returns the x where the next pill should end. */
@@ -126,6 +143,9 @@ class DriveView(ctx: Context, private val actions: Actions) : View(ctx) {
         c.drawText("42140 · TRANSFORMATION VEHICLE", width / 2f, height * 0.34f, label)
         label.color = text
         label.textSize = 26 * d
+        val maxW = width - 48 * d
+        val tw = label.measureText(status)
+        if (tw > maxW) label.textSize *= maxW / tw
         c.drawText(status, width / 2f, height * 0.46f, label)
         fill.color = accent
         c.drawRoundRect(scanBtn, 14 * d, 14 * d, fill)
