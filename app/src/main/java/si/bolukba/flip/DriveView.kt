@@ -16,11 +16,15 @@ class DriveView(ctx: Context, private val actions: Actions) : View(ctx) {
         fun onHalt()
         fun onSpeed(index: Int)
         fun onScan()
+        fun onConnect()
+        fun onDisconnect()
         fun onSliders(left: Float, right: Float)
     }
 
     // Model, written by MainActivity before invalidate().
     var connected = false
+    /** Not scanning or connecting: the connect screen offers Connect instead of Cancel. */
+    var idle = true
     var status = ""
     var battery = -1
     var rssi = 0
@@ -60,6 +64,8 @@ class DriveView(ctx: Context, private val actions: Actions) : View(ctx) {
     private val spinR = RectF()
     private val stopBtn = RectF()
     private val scanBtn = RectF()
+    private val connectBtn = RectF()
+    private val discBtn = RectF()
     private val speedBtns = Array(3) { RectF() }
     private val pointerSlider = HashMap<Int, Int>() // pointer id -> 0 left, 1 right
 
@@ -82,7 +88,8 @@ class DriveView(ctx: Context, private val actions: Actions) : View(ctx) {
             stopBtn.set(bl, h - pad - bh, br, h - pad)
             val segTop = 220 * d
             for (i in 0..2) speedBtns[i].set(cx - segW * 1.5f + segW * i, segTop, cx - segW * 1.5f + segW * (i + 1), segTop + 44 * d)
-            scanBtn.set(cx - 90 * d, h * 0.58f, cx + 90 * d, h * 0.58f + 52 * d)
+            connectBtn.set(cx - 90 * d, h * 0.58f, cx + 90 * d, h * 0.58f + 52 * d)
+            scanBtn.set(cx - 90 * d, connectBtn.bottom + 12 * d, cx + 90 * d, connectBtn.bottom + 64 * d)
             return
         }
         val top = 64 * d
@@ -95,7 +102,8 @@ class DriveView(ctx: Context, private val actions: Actions) : View(ctx) {
         stopBtn.set(spinL.left, h - pad - bh, spinR.right, h - pad)
         val segTop = spinL.top - 60 * d
         for (i in 0..2) speedBtns[i].set(cx - segW * 1.5f + segW * i, segTop, cx - segW * 1.5f + segW * (i + 1), segTop + 44 * d)
-        scanBtn.set(cx - 90 * d, h * 0.62f, cx + 90 * d, h * 0.62f + 52 * d)
+        connectBtn.set(cx - 186 * d, h * 0.62f, cx - 6 * d, h * 0.62f + 52 * d)
+        scanBtn.set(cx + 6 * d, connectBtn.top, cx + 186 * d, connectBtn.bottom)
     }
 
     override fun onDraw(c: Canvas) {
@@ -112,12 +120,27 @@ class DriveView(ctx: Context, private val actions: Actions) : View(ctx) {
 
     private fun drawTopBar(c: Canvas) {
         val y = 36 * d
-        fill.color = if (connected) good else accent
-        c.drawCircle(30 * d, y, 5 * d, fill)
+        if (!connected) {
+            fill.color = accent
+            c.drawCircle(30 * d, y, 5 * d, fill)
+        }
         label.color = text
         label.textSize = 15 * d
         label.textAlign = Paint.Align.LEFT
-        c.drawText(if (connected) "Technic Hub" else "Flip Driver", 44 * d, y + 5 * d, label)
+        if (connected) {
+            // The hub name doubles as the Disconnect button.
+            label.textSize = 14 * d
+            val w = label.measureText("Disconnect") + 48 * d
+            discBtn.set(18 * d, y - 22 * d, 18 * d + w, y + 22 * d)
+            fill.color = raised
+            c.drawRoundRect(discBtn, 22 * d, 22 * d, fill)
+            fill.color = good
+            c.drawCircle(discBtn.left + 18 * d, y, 5 * d, fill)
+            c.drawText("Disconnect", discBtn.left + 32 * d, y + 5 * d, label)
+        } else {
+            discBtn.setEmpty()
+            c.drawText("Flip Driver", 44 * d, y + 5 * d, label)
+        }
         var x = width - 24 * d
         x = chip(c, x, y, if (battery >= 0) "$battery%" else "—", text)
         x = chip(c, x, y, padName?.let { if (arcade) "$it · arcade" else "$it · tank" } ?: "No controller", if (padName != null) accent else muted)
@@ -149,10 +172,14 @@ class DriveView(ctx: Context, private val actions: Actions) : View(ctx) {
         if (tw > maxW) label.textSize *= maxW / tw
         c.drawText(status, width / 2f, height * 0.46f, label)
         fill.color = accent
-        c.drawRoundRect(scanBtn, 14 * d, 14 * d, fill)
+        c.drawRoundRect(connectBtn, 14 * d, 14 * d, fill)
         label.color = bg
         label.textSize = 16 * d
-        c.drawText("Scan for hub", scanBtn.centerX(), scanBtn.centerY() + 6 * d, label)
+        c.drawText(if (idle) "Connect" else "Cancel", connectBtn.centerX(), connectBtn.centerY() + 6 * d, label)
+        fill.color = raised
+        c.drawRoundRect(scanBtn, 14 * d, 14 * d, fill)
+        label.color = text
+        c.drawText("Scan new hub", scanBtn.centerX(), scanBtn.centerY() + 6 * d, label)
     }
 
     private fun drawSlider(c: Canvas, r: RectF, v: Float, name: String) {
@@ -245,9 +272,11 @@ class DriveView(ctx: Context, private val actions: Actions) : View(ctx) {
                 val y = e.getY(i)
                 if (!connected) {
                     if (scanBtn.contains(x, y)) actions.onScan()
+                    if (connectBtn.contains(x, y)) if (idle) actions.onConnect() else actions.onDisconnect()
                     return true
                 }
                 when {
+                    discBtn.contains(x, y) -> actions.onDisconnect()
                     sliderL.contains(x, y) -> pointerSlider[id] = 0
                     sliderR.contains(x, y) -> pointerSlider[id] = 1
                     spinL.contains(x, y) -> actions.onSpin(-1)

@@ -44,6 +44,9 @@ class Driver(ctx: Context) : Hub.Listener {
     var touchLeft = 0f
     var touchRight = 0f
 
+    /** Set by a manual disconnect: don't auto-reconnect when the app comes back. */
+    var parked = false
+
     var arcade = prefs.getBoolean("arcade", false)
         private set
     var speed = prefs.getInt("speed", 1)

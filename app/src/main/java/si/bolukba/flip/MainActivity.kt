@@ -39,7 +39,8 @@ class MainActivity : Activity(), Driver.Ui, DriveView.Actions {
         driver.ui = this
         driver.findPad()
         onChange()
-        if (hasBtPermissions()) driver.hub.start() else requestPermissions(PERMISSIONS, 1)
+        if (!hasBtPermissions()) requestPermissions(PERMISSIONS, 1)
+        else if (!driver.parked) driver.hub.start()
     }
 
     override fun onStop() {
@@ -71,6 +72,7 @@ class MainActivity : Activity(), Driver.Ui, DriveView.Actions {
     override fun onChange() {
         val hub = driver.hub
         view.connected = hub.state == Hub.State.READY
+        view.idle = hub.state == Hub.State.IDLE
         view.status = hub.detail
         view.battery = driver.battery
         view.rssi = driver.rssi
@@ -97,7 +99,20 @@ class MainActivity : Activity(), Driver.Ui, DriveView.Actions {
     override fun onSpeed(index: Int) = driver.setSpeed(index)
 
     override fun onScan() {
+        driver.parked = false
         if (hasBtPermissions()) driver.hub.forget() else requestPermissions(PERMISSIONS, 1)
+    }
+
+    override fun onConnect() {
+        driver.parked = false
+        if (hasBtPermissions()) driver.hub.start() else requestPermissions(PERMISSIONS, 1)
+    }
+
+    /** Brakes and drops the link; stays disconnected until Connect is pressed. */
+    override fun onDisconnect() {
+        driver.parked = true
+        driver.halt()
+        driver.hub.stop()
     }
 
     // ---- Gamepad (foreground) --------------------------------------------------------------

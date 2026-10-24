@@ -17,6 +17,7 @@ class HubService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val driver = Driver.get(this)
         if (intent?.action == ACTION_DISCONNECT) {
+            driver.parked = true
             driver.halt()
             driver.hub.stop()
             stopSelf()
