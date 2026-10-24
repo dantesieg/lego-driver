@@ -2,6 +2,7 @@ package si.bolukba.flip
 
 import android.Manifest
 import android.app.Activity
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.CombinedVibration
@@ -53,7 +54,10 @@ class MainActivity : Activity(), Hub.Listener, DriveView.Actions, Choreographer.
             hide(WindowInsets.Type.systemBars())
             systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
-        hub = Hub(this, this)
+        // The hub outlives the activity so HubService can keep the link while backgrounded.
+        hub = HubService.hub ?: Hub(applicationContext, this).also { HubService.hub = it }
+        hub.listener = this
+        onState(hub.state, hub.detail)
         arcade = getPreferences(MODE_PRIVATE).getBoolean("arcade", false)
         speed = getPreferences(MODE_PRIVATE).getInt("speed", 1)
         view.arcade = arcade
@@ -63,8 +67,8 @@ class MainActivity : Activity(), Hub.Listener, DriveView.Actions, Choreographer.
 
     override fun onStart() {
         super.onStart()
-        if (hasBtPermissions()) hub.start()
-        else requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT), 1)
+        stopService(Intent(this, HubService::class.java))
+        if (hasBtPermissions()) hub.start() else requestPermissions(PERMISSIONS, 1)
         running = true
         Choreographer.getInstance().postFrameCallback(this)
     }
@@ -72,7 +76,11 @@ class MainActivity : Activity(), Hub.Listener, DriveView.Actions, Choreographer.
     override fun onStop() {
         super.onStop()
         running = false
-        hub.stop()
+        if (isChangingConfigurations) return
+        if (hub.state == Hub.State.IDLE) return
+        // Never keep driving unseen: brake, then either drop the link or hold it in the service.
+        onHalt()
+        if (isFinishing) hub.stop() else startForegroundService(Intent(this, HubService::class.java))
     }
 
     override fun onRequestPermissionsResult(code: Int, perms: Array<out String>, results: IntArray) {
@@ -190,7 +198,7 @@ class MainActivity : Activity(), Hub.Listener, DriveView.Actions, Choreographer.
 
     override fun onScan() {
         if (hasBtPermissions()) hub.forget()
-        else requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT), 1)
+        else requestPermissions(PERMISSIONS, 1)
     }
 
     // ---- Hub callbacks ---------------------------------------------------------------------
@@ -324,6 +332,11 @@ class MainActivity : Activity(), Hub.Listener, DriveView.Actions, Choreographer.
     }
 
     companion object {
+        private val PERMISSIONS = arrayOf(
+            Manifest.permission.BLUETOOTH_SCAN,
+            Manifest.permission.BLUETOOTH_CONNECT,
+            Manifest.permission.POST_NOTIFICATIONS,
+        )
         private val SPEEDS = intArrayOf(40, 70, 100)
         private const val SPIN_ADJUST = 55
         private const val DEADZONE = 0.08f

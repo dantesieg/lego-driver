@@ -25,7 +25,7 @@ import java.util.UUID
  * All callbacks are delivered on the main thread.
  */
 @SuppressLint("MissingPermission") // callers request BLUETOOTH_SCAN/CONNECT first
-class Hub(private val ctx: Context, private val listener: Listener) {
+class Hub(private val ctx: Context, var listener: Listener) {
 
     enum class State { IDLE, SCANNING, CONNECTING, READY }
 
@@ -46,6 +46,8 @@ class Hub(private val ctx: Context, private val listener: Listener) {
     private var orientationPort = -1
 
     var state = State.IDLE
+        private set
+    var detail = ""
         private set
 
     fun start() {
@@ -228,6 +230,7 @@ class Hub(private val ctx: Context, private val listener: Listener) {
 
     private fun setState(s: State, detail: String) {
         state = s
+        this.detail = detail
         listener.onState(s, detail)
     }
 
