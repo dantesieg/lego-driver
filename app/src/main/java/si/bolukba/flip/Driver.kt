@@ -1,11 +1,9 @@
 package si.bolukba.flip
 
 import android.content.Context
-import android.os.CombinedVibration
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
-import android.os.VibrationEffect
 import android.view.InputDevice
 import kotlin.math.abs
 import kotlin.math.max
@@ -70,6 +68,8 @@ class Driver(ctx: Context) : Hub.Listener {
 
     private var yaw = 0
     private var spinDir = 0
+    private val haptics = Haptics()
+    private var lastState = Hub.State.IDLE
     private var spinStartYaw = 0
     private var spinStartMs = 0L
     private var lastL = Int.MIN_VALUE
@@ -86,14 +86,21 @@ class Driver(ctx: Context) : Hub.Listener {
     }
 
     private fun tick() {
-        if (hub.state != Hub.State.READY) return
+        if (hub.state != Hub.State.READY) {
+            haptics.engine(0, 0)
+            return
+        }
 
         if (spinDir != 0) {
             val turned = abs(angleDiff(yaw, spinStartYaw))
             // Stop early to absorb coast-on overshoot (app uses 180 - 50..65).
-            if (turned < 180 - SPIN_ADJUST && SystemClock.uptimeMillis() - spinStartMs < 6000) return
+            if (turned < 180 - SPIN_ADJUST && SystemClock.uptimeMillis() - spinStartMs < 6000) {
+                haptics.engine(100, -100)
+                return
+            }
             spinDir = 0
             hub.brake()
+            haptics.pulse(50, 160)
             lastL = Int.MIN_VALUE
             lastR = Int.MIN_VALUE
         }
@@ -148,6 +155,7 @@ class Driver(ctx: Context) : Hub.Listener {
             lastR = r
             show(l, r)
         }
+        haptics.engine(l, r)
     }
 
     private fun show(l: Int, r: Int) {
@@ -166,6 +174,7 @@ class Driver(ctx: Context) : Hub.Listener {
         // Same raw sign on both ports = pivot turn, as the original app does.
         hub.setRaw(dir * 100, dir * 100)
         show(dir * 100, -dir * 100)
+        haptics.pulse(60, 220)
     }
 
     fun halt() {
@@ -174,6 +183,7 @@ class Driver(ctx: Context) : Hub.Listener {
         lastL = 0
         lastR = 0
         show(0, 0)
+        haptics.pulse(120, 255)
     }
 
     /** Zeroes every input so nothing keeps driving after an input source goes away. */
@@ -187,13 +197,14 @@ class Driver(ctx: Context) : Hub.Listener {
         speed = index.coerceIn(0, 2)
         prefs.edit().putInt("speed", speed).apply()
         lastL = Int.MIN_VALUE
+        haptics.pulses(speed + 1) // 1-3 ticks = Eco/Normal/Turbo
         ui?.onChange()
     }
 
     fun nextMode() {
         mode = (mode + 1) % MODE_NAMES.size
         prefs.edit().putInt("mode", mode).apply()
-        rumble(40)
+        haptics.pulse(40, 150)
         ui?.onChange()
     }
 
@@ -201,15 +212,11 @@ class Driver(ctx: Context) : Hub.Listener {
 
     fun findPad(): InputDevice? {
         pad = InputDevice.getDeviceIds().map { InputDevice.getDevice(it) }.firstOrNull { isPad(it) && !it!!.isVirtual }
+        haptics.attach(pad)
         ui?.onChange()
         return pad
     }
 
-    fun rumble(ms: Long) {
-        val vm = pad?.vibratorManager ?: return
-        if (vm.vibratorIds.isEmpty()) return
-        runCatching { vm.vibrate(CombinedVibration.createParallel(VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE))) }
-    }
 
     // ---- Hub callbacks ---------------------------------------------------------------------
 
@@ -217,7 +224,11 @@ class Driver(ctx: Context) : Hub.Listener {
         lastL = Int.MIN_VALUE
         lastR = Int.MIN_VALUE
         if (state != Hub.State.READY) spinDir = 0
-        if (state == Hub.State.READY) rumble(80)
+        when {
+            state == Hub.State.READY && lastState != Hub.State.READY -> haptics.pulses(2, 60, 60, 200)
+            state != Hub.State.READY && lastState == Hub.State.READY -> haptics.pulse(400, 255)
+        }
+        lastState = state
         ui?.onChange()
     }
 
@@ -238,7 +249,7 @@ class Driver(ctx: Context) : Hub.Listener {
         if (now != flipped) {
             flipped = now
             lastL = Int.MIN_VALUE
-            rumble(150)
+            haptics.pulses(2, 90, 80, 255)
             ui?.onChange()
         }
     }
