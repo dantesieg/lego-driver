@@ -51,15 +51,12 @@ android {
         }
     }
 
-    applicationVariants.all {
-        outputs.all {
-            (this as com.android.build.gradle.internal.api.BaseVariantOutputImpl).outputFileName =
-                "flipdriver-v${versionName}-${buildType.name}.apk"
-        }
-    }
-
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+}
+
+base {
+    archivesName.set("flipdriver-v0.1.$buildNumber")
 }
