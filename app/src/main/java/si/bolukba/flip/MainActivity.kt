@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.hardware.input.InputManager
 import android.os.Bundle
 import android.view.InputDevice
 import android.view.KeyEvent
@@ -15,7 +16,7 @@ import kotlin.math.abs
 import kotlin.math.max
 
 /** UI and foreground input; all driving logic lives in [Driver]. */
-class MainActivity : Activity(), Driver.Ui, DriveView.Actions {
+class MainActivity : Activity(), Driver.Ui, DriveView.Actions, InputManager.InputDeviceListener {
 
     private lateinit var driver: Driver
     private lateinit var view: DriveView
@@ -30,7 +31,31 @@ class MainActivity : Activity(), Driver.Ui, DriveView.Actions {
             systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
         driver = Driver.get(this)
+        getSystemService(InputManager::class.java).registerInputDeviceListener(this, null)
     }
+
+    override fun onDestroy() {
+        getSystemService(InputManager::class.java).unregisterInputDeviceListener(this)
+        super.onDestroy()
+    }
+
+    /** Losing focus (shade, split screen, dialogs) means no more release events: zero everything. */
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (!hasFocus) driver.releaseInputs()
+    }
+
+    override fun onInputDeviceAdded(deviceId: Int) {
+        driver.findPad()
+    }
+
+    override fun onInputDeviceRemoved(deviceId: Int) {
+        // A controller that drops mid-press never sends its release.
+        if (driver.pad?.id == deviceId) driver.releaseInputs()
+        driver.findPad()
+    }
+
+    override fun onInputDeviceChanged(deviceId: Int) {}
 
     override fun onStart() {
         super.onStart()

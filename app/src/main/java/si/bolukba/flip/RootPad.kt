@@ -3,64 +3,128 @@ package si.bolukba.flip
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
+import android.util.Log
 import java.io.File
 import kotlin.math.abs
 import kotlin.math.max
 
 /**
  * Background gamepad input via root: runs the bundled evgrab helper with su, which grabs the
- * controller's /dev/input node exclusively (so other apps see nothing) and streams its events.
+ * controller's /dev/input node exclusively (so other apps see nothing) and streams full state
+ * snapshots. Fail-safe: inputs are zeroed whenever snapshots stop arriving, and the reader
+ * re-attaches by itself when the controller comes back.
  */
 class RootPad(private val ctx: Context, private val driver: Driver) {
 
     private val main = Handler(Looper.getMainLooper())
     private var proc: Process? = null
+    private var active = false
+    private var lastLine = 0L
+    private var lastAttempt = 0L
+    private val axisOrder = ArrayList<Int>()
     private val ranges = HashMap<Int, IntArray>() // code -> min, max, flat
+    private var held = emptySet<Int>()
 
-    /** Starts the reader; returns an error message, or null when running. */
+    /** Starts reading (and keeps re-attaching); returns why it can't run right now, or null. */
     fun start(): String? {
+        active = true
+        main.removeCallbacks(watchdog)
+        main.post(watchdog)
+        lastAttempt = SystemClock.uptimeMillis()
+        return attach()
+    }
+
+    fun stop() {
+        active = false
+        main.removeCallbacks(watchdog)
+        kill()
+    }
+
+    private fun attach(): String? {
         if (proc != null) return null
-        val name = driver.pad?.name ?: driver.findPad()?.name ?: return "No controller"
+        val name = driver.findPad()?.name ?: return "No controller"
         val node = findNode(name) ?: return "Controller node not found"
         val helper = File(ctx.applicationInfo.nativeLibraryDir, "libevgrab.so").path
-        val p = runCatching { ProcessBuilder("su", "-c", "$helper $node").start() }.getOrNull()
+        // pkill clears helpers left over from an earlier run: they would hold the grab.
+        val p = runCatching { ProcessBuilder("su", "-c", "pkill -x libevgrab.so; exec $helper $node").start() }.getOrNull()
             ?: return "Root not available"
         proc = p
+        axisOrder.clear()
+        ranges.clear()
+        held = emptySet()
+        lastLine = SystemClock.uptimeMillis()
         Thread {
-            var ok = false
             runCatching {
                 p.inputStream.bufferedReader().forEachLine { line ->
-                    if (line == "OK") ok = true
                     main.post { if (proc === p) handle(line) }
                 }
             }
+            val err = runCatching { p.errorStream.bufferedReader().readText().trim() }.getOrDefault("")
             main.post {
                 if (proc === p) {
+                    Log.w(TAG, "helper exited: $err")
                     proc = null
+                    held = emptySet()
                     driver.releaseInputs()
                 }
             }
-            if (!ok) android.util.Log.w("RootPad", "helper exited: " + p.errorStream.bufferedReader().readText())
         }.apply { isDaemon = true }.start()
         return null
     }
 
-    fun stop() {
+    private fun kill() {
         val p = proc ?: return
         proc = null
-        // Closing stdin makes the helper release its grab and exit.
+        // Closing stdin makes the helper release its grab and exit; it also dies with su.
         runCatching { p.outputStream.close() }
         p.destroy()
+        held = emptySet()
         driver.releaseInputs()
     }
 
+    /** Every 250 ms: zero inputs if the stream went silent, re-attach if the helper is gone. */
+    private val watchdog = object : Runnable {
+        override fun run() {
+            if (!active) return
+            val now = SystemClock.uptimeMillis()
+            if (proc != null && now - lastLine > STALE_MS) {
+                Log.w(TAG, "no snapshot for ${STALE_MS}ms, releasing")
+                kill()
+            }
+            if (proc == null && now - lastAttempt > RETRY_MS) {
+                lastAttempt = now
+                attach()
+            }
+            main.postDelayed(this, 250)
+        }
+    }
+
     private fun handle(line: String) {
+        lastLine = SystemClock.uptimeMillis()
         val f = line.split(' ')
         when (f[0]) {
-            "R" -> if (f.size == 5) ranges[f[1].toInt()] = intArrayOf(f[2].toInt(), f[3].toInt(), f[4].toInt())
-            "A" -> if (f.size == 3) axis(f[1].toInt(), f[2].toInt())
-            "K" -> if (f.size == 3) key(f[1].toInt(), f[2].toInt() != 0)
+            "R" -> if (f.size == 5) {
+                val code = f[1].toInt()
+                axisOrder.add(code)
+                ranges[code] = intArrayOf(f[2].toInt(), f[3].toInt(), f[4].toInt())
+            }
+            "S" -> snapshot(f)
         }
+    }
+
+    private fun snapshot(f: List<String>) {
+        val bar = f.indexOf("|")
+        if (bar < 0 || bar - 1 != axisOrder.size) return
+        for (i in axisOrder.indices) axis(axisOrder[i], f[i + 1].toIntOrNull() ?: return)
+        val now = f.subList(bar + 1, f.size).mapNotNull { it.toIntOrNull() }.toSet()
+        driver.dUp = BTN_DPAD_UP in now
+        driver.dDown = BTN_DPAD_DOWN in now
+        driver.dLeft = BTN_DPAD_LEFT in now
+        driver.dRight = BTN_DPAD_RIGHT in now
+        // Actions fire on press edges.
+        for (code in now - held) press(code)
+        held = now
     }
 
     private fun axis(code: Int, v: Int) {
@@ -91,19 +155,11 @@ class RootPad(private val ctx: Context, private val driver: Driver) {
         return if (x < DEADZONE) 0f else x.coerceAtMost(1f)
     }
 
-    private fun key(code: Int, down: Boolean) {
-        when (code) {
-            BTN_DPAD_UP -> driver.dUp = down
-            BTN_DPAD_DOWN -> driver.dDown = down
-            BTN_DPAD_LEFT -> driver.dLeft = down
-            BTN_DPAD_RIGHT -> driver.dRight = down
-        }
-        if (!down) return
+    private fun press(code: Int) {
         when (code) {
             BTN_TL -> driver.spin(-1)
             BTN_TR -> driver.spin(1)
-            BTN_EAST -> driver.halt()
-            BTN_WEST -> driver.halt()
+            BTN_WEST, BTN_EAST -> driver.halt() // Square, Circle
             BTN_NORTH -> driver.setSpeed((driver.speed + 1) % 3)
         }
     }
@@ -116,7 +172,7 @@ class RootPad(private val ctx: Context, private val driver: Driver) {
             }.getOrNull() ?: return null
         for (block in text.split("\n\n")) {
             val n = Regex("""N: Name="(.*)"""").find(block)?.groupValues?.get(1) ?: continue
-            // Pick the main device, not its motion-sensor or touchpad siblings.
+            // Exact match picks the main device, not its motion-sensor or touchpad siblings.
             if (n != name) continue
             val ev = Regex("""H: Handlers=.*?(event\d+)""").find(block)?.groupValues?.get(1) ?: continue
             return "/dev/input/$ev"
@@ -125,6 +181,9 @@ class RootPad(private val ctx: Context, private val driver: Driver) {
     }
 
     companion object {
+        private const val TAG = "RootPad"
+        private const val STALE_MS = 500L
+        private const val RETRY_MS = 2000L
         private const val DEADZONE = 0.08f
         private const val ABS_X = 0x00
         private const val ABS_Y = 0x01
