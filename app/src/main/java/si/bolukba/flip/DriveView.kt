@@ -17,6 +17,7 @@ class DriveView(ctx: Context, private val actions: Actions) : View(ctx) {
         fun onSpeed(index: Int)
         fun onScan()
         fun onMode()
+        fun onSettings()
         fun onConnect()
         fun onDisconnect()
         fun onSliders(left: Float, right: Float)
@@ -68,6 +69,7 @@ class DriveView(ctx: Context, private val actions: Actions) : View(ctx) {
     private val connectBtn = RectF()
     private val discBtn = RectF()
     private val modeBtn = RectF()
+    private val gearBtn = RectF()
     private val speedBtns = Array(3) { RectF() }
     private val pointerSlider = HashMap<Int, Int>() // pointer id -> 0 left, 1 right
 
@@ -149,7 +151,29 @@ class DriveView(ctx: Context, private val actions: Actions) : View(ctx) {
         val right = x
         x = chip(c, x, y, (if (width > height) (padName ?: "Controller") + " · " else "") + modeName + " ▾", if (padName != null) accent else muted)
         modeBtn.set(x + 8 * d, y - 22 * d, right, y + 22 * d)
+        x = gear(c, x, y)
         if (connected && rssi != 0 && width > height) chip(c, x, y, "$rssi dBm", muted)
+    }
+
+    /** Settings button: a 44dp round button with a drawn gear; returns the next pill's end x. */
+    private fun gear(c: Canvas, right: Float, cy: Float): Float {
+        val r = 22 * d
+        val cx = right - r
+        gearBtn.set(cx - r, cy - r, cx + r, cy + r)
+        fill.color = raised
+        c.drawCircle(cx, cy, r, fill)
+        stroke.color = text
+        stroke.strokeWidth = 2 * d
+        c.drawCircle(cx, cy, 5 * d, stroke)
+        stroke.strokeWidth = 3 * d
+        for (i in 0 until 8) {
+            val a = Math.PI * i / 4
+            val cos = Math.cos(a).toFloat()
+            val sin = Math.sin(a).toFloat()
+            c.drawLine(cx + cos * 7 * d, cy + sin * 7 * d, cx + cos * 10 * d, cy + sin * 10 * d, stroke)
+        }
+        stroke.strokeWidth = 2 * d
+        return gearBtn.left - 8 * d
     }
 
     /** Draws a pill ending at [right]; returns the x where the next pill should end. */
@@ -275,6 +299,10 @@ class DriveView(ctx: Context, private val actions: Actions) : View(ctx) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
                 val x = e.getX(i)
                 val y = e.getY(i)
+                if (gearBtn.contains(x, y)) {
+                    actions.onSettings()
+                    return true
+                }
                 if (!connected) {
                     if (scanBtn.contains(x, y)) actions.onScan()
                     if (connectBtn.contains(x, y)) if (idle) actions.onConnect() else actions.onDisconnect()

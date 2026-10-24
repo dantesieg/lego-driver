@@ -69,6 +69,7 @@ class Driver(ctx: Context) : Hub.Listener {
     private var yaw = 0
     private var spinDir = 0
     private val haptics = Haptics()
+    private var bothTriggers = false
     private var lastState = Hub.State.IDLE
     private var spinStartYaw = 0
     private var spinStartMs = 0L
@@ -95,14 +96,25 @@ class Driver(ctx: Context) : Hub.Listener {
             val turned = abs(angleDiff(yaw, spinStartYaw))
             // Stop early to absorb coast-on overshoot (app uses 180 - 50..65).
             if (turned < 180 - SPIN_ADJUST && SystemClock.uptimeMillis() - spinStartMs < 6000) {
-                haptics.engine(100, -100)
+                if (hapticOn(H_ENGINE)) haptics.engine(100, -100)
                 return
             }
             spinDir = 0
             hub.brake()
-            haptics.pulse(50, 160)
+            if (hapticOn(H_SPIN)) haptics.pulse(50, 160)
             lastL = Int.MIN_VALUE
             lastR = Int.MIN_VALUE
+        }
+
+        // L2 + R2 fully pressed together cycles the layout (once per press).
+        val both = l2 > 0.9f && r2 > 0.9f
+        if (both && !bothTriggers) nextMode()
+        bothTriggers = both
+        if (bothTriggers || (l2 > 0.5f && r2 > 0.5f)) {
+            // Don't drive while the combo is being pressed.
+            if (lastL != 0 || lastR != 0) { hub.setTracks(0, 0); lastL = 0; lastR = 0; show(0, 0) }
+            haptics.engine(0, 0)
+            return
         }
 
         var left: Float
@@ -155,7 +167,7 @@ class Driver(ctx: Context) : Hub.Listener {
             lastR = r
             show(l, r)
         }
-        haptics.engine(l, r)
+        if (hapticOn(H_ENGINE)) haptics.engine(l, r) else haptics.engine(0, 0)
     }
 
     private fun show(l: Int, r: Int) {
@@ -174,7 +186,7 @@ class Driver(ctx: Context) : Hub.Listener {
         // Same raw sign on both ports = pivot turn, as the original app does.
         hub.setRaw(dir * 100, dir * 100)
         show(dir * 100, -dir * 100)
-        haptics.pulse(60, 220)
+        if (hapticOn(H_SPIN)) haptics.pulse(60, 220)
     }
 
     fun halt() {
@@ -183,7 +195,7 @@ class Driver(ctx: Context) : Hub.Listener {
         lastL = 0
         lastR = 0
         show(0, 0)
-        haptics.pulse(120, 255)
+        if (hapticOn(H_BRAKE)) haptics.pulse(120, 255)
     }
 
     /** Zeroes every input so nothing keeps driving after an input source goes away. */
@@ -197,15 +209,24 @@ class Driver(ctx: Context) : Hub.Listener {
         speed = index.coerceIn(0, 2)
         prefs.edit().putInt("speed", speed).apply()
         lastL = Int.MIN_VALUE
-        haptics.pulses(speed + 1) // 1-3 ticks = Eco/Normal/Turbo
+        if (hapticOn(H_SPEED)) haptics.pulses(speed + 1) // 1-3 ticks = Eco/Normal/Turbo
         ui?.onChange()
     }
 
-    fun nextMode() {
-        mode = (mode + 1) % MODE_NAMES.size
+    fun nextMode() = setMode((mode + 1) % MODE_NAMES.size)
+
+    fun setMode(m: Int) {
+        mode = m.coerceIn(0, MODE_NAMES.size - 1)
         prefs.edit().putInt("mode", mode).apply()
-        haptics.pulse(40, 150)
+        // 1-4 ticks tell which layout is now active without looking.
+        if (hapticOn(H_LAYOUT)) haptics.pulses(mode + 1, 35, 60, 150)
         ui?.onChange()
+    }
+
+    fun hapticOn(key: String) = prefs.getBoolean(key, true)
+
+    fun setHaptic(key: String, on: Boolean) {
+        prefs.edit().putBoolean(key, on).apply()
     }
 
     // ---- Gamepad ---------------------------------------------------------------------------
@@ -225,8 +246,8 @@ class Driver(ctx: Context) : Hub.Listener {
         lastR = Int.MIN_VALUE
         if (state != Hub.State.READY) spinDir = 0
         when {
-            state == Hub.State.READY && lastState != Hub.State.READY -> haptics.pulses(2, 60, 60, 200)
-            state != Hub.State.READY && lastState == Hub.State.READY -> haptics.pulse(400, 255)
+            state == Hub.State.READY && lastState != Hub.State.READY -> if (hapticOn(H_CONNECT)) haptics.pulses(2, 60, 60, 200)
+            state != Hub.State.READY && lastState == Hub.State.READY -> if (hapticOn(H_LOST)) haptics.pulse(400, 255)
         }
         lastState = state
         ui?.onChange()
@@ -249,7 +270,7 @@ class Driver(ctx: Context) : Hub.Listener {
         if (now != flipped) {
             flipped = now
             lastL = Int.MIN_VALUE
-            haptics.pulses(2, 90, 80, 255)
+            if (hapticOn(H_FLIP)) haptics.pulses(2, 90, 80, 255)
             ui?.onChange()
         }
     }
@@ -259,7 +280,31 @@ class Driver(ctx: Context) : Hub.Listener {
         const val MODE_ARCADE = 1
         const val MODE_LEFT = 2
         const val MODE_RIGHT = 3
-        val MODE_NAMES = arrayOf("tank", "arcade", "left stick", "right stick")
+        val MODE_NAMES = arrayOf("tank", "arcade", "left", "right")
+        val MODE_HINTS = arrayOf(
+            "Tank: left stick = left track, right stick = right track",
+            "Arcade: R2 forward, L2 reverse, left stick steers",
+            "Left stick only",
+            "Right stick only",
+        )
+        const val H_ENGINE = "h_engine"
+        const val H_CONNECT = "h_connect"
+        const val H_LOST = "h_lost"
+        const val H_FLIP = "h_flip"
+        const val H_SPIN = "h_spin"
+        const val H_BRAKE = "h_brake"
+        const val H_SPEED = "h_speed"
+        const val H_LAYOUT = "h_layout"
+        val HAPTICS = listOf(
+            H_ENGINE to "Engine rumble while driving",
+            H_CONNECT to "Hub connected",
+            H_LOST to "Hub connection lost",
+            H_FLIP to "Vehicle flipped",
+            H_SPIN to "Spin start and end",
+            H_BRAKE to "Brake",
+            H_SPEED to "Speed change (1–3 ticks)",
+            H_LAYOUT to "Layout change (1–4 ticks)",
+        )
         private val SPEEDS = intArrayOf(40, 70, 100)
         private const val SPIN_ADJUST = 55
         private const val TURN_INNER = 0.3f

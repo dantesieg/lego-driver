@@ -59,6 +59,7 @@ class MainActivity : Activity(), Driver.Ui, DriveView.Actions, InputManager.Inpu
 
     override fun onStart() {
         super.onStart()
+        inSettings = false
         // Back in front: Android delivers the controller again, so drop the root reader.
         stopService(Intent(this, HubService::class.java))
         driver.ui = this
@@ -75,6 +76,12 @@ class MainActivity : Activity(), Driver.Ui, DriveView.Actions, InputManager.Inpu
         // Held buttons/sliders never see their release once we lose focus.
         driver.releaseInputs()
         if (driver.hub.state == Hub.State.IDLE) return
+        // Settings is our own screen: keep the link, no background mode, but don't drive unseen.
+        if (inSettings) {
+            inSettings = false
+            driver.halt()
+            return
+        }
         if (isFinishing) {
             driver.halt()
             driver.hub.stop()
@@ -124,6 +131,13 @@ class MainActivity : Activity(), Driver.Ui, DriveView.Actions, InputManager.Inpu
     override fun onSpeed(index: Int) = driver.setSpeed(index)
 
     override fun onMode() = driver.nextMode()
+
+    private var inSettings = false
+
+    override fun onSettings() {
+        inSettings = true
+        startActivity(Intent(this, SettingsActivity::class.java))
+    }
 
     override fun onScan() {
         driver.parked = false
