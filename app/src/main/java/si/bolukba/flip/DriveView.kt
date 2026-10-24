@@ -35,6 +35,9 @@ class DriveView(ctx: Context, private val actions: Actions) : View(ctx) {
     var flipped = false
     var spinning = false
     var speed = 1
+    var telemetry: String? = null
+    var notice: String? = null
+    private var chipsLeft = 0f
     var outLeft = 0
     var outRight = 0
 
@@ -117,9 +120,37 @@ class DriveView(ctx: Context, private val actions: Actions) : View(ctx) {
             drawConnect(c)
             return
         }
+        drawTelemetry(c)
         drawSlider(c, sliderL, touchLeft, "LEFT")
         drawSlider(c, sliderR, touchRight, "RIGHT")
         drawCenter(c)
+        notice?.let { drawNotice(c, it) }
+    }
+
+    /** Landscape: in the top bar's free middle; portrait (or too narrow): a line under the bar. */
+    private fun drawTelemetry(c: Canvas) {
+        val t = telemetry ?: return
+        mono.textSize = 11 * d
+        mono.color = muted
+        mono.textAlign = Paint.Align.CENTER
+        val gapL = discBtn.right + 12 * d
+        val gapR = chipsLeft - 4 * d
+        if (width > height && mono.measureText(t) <= gapR - gapL) {
+            c.drawText(t, (gapL + gapR) / 2, 36 * d + 4 * d, mono)
+        } else {
+            c.drawText(t, width / 2f, 76 * d, mono)
+        }
+    }
+
+    private fun drawNotice(c: Canvas, text: String) {
+        label.textSize = 15 * d
+        label.textAlign = Paint.Align.CENTER
+        val w = label.measureText(text) + 40 * d
+        val r = RectF(width / 2f - w / 2, height * 0.42f - 24 * d, width / 2f + w / 2, height * 0.42f + 24 * d)
+        fill.color = danger
+        c.drawRoundRect(r, 24 * d, 24 * d, fill)
+        label.color = bg
+        c.drawText(text, r.centerX(), r.centerY() + 5 * d, label)
     }
 
     private fun drawTopBar(c: Canvas) {
@@ -152,7 +183,8 @@ class DriveView(ctx: Context, private val actions: Actions) : View(ctx) {
         x = chip(c, x, y, (if (width > height) (padName ?: "Controller") + " · " else "") + modeName + " ▾", if (padName != null) accent else muted)
         modeBtn.set(x + 8 * d, y - 22 * d, right, y + 22 * d)
         x = gear(c, x, y)
-        if (connected && rssi != 0 && width > height) chip(c, x, y, "$rssi dBm", muted)
+        if (connected && rssi != 0 && width > height) x = chip(c, x, y, "$rssi dBm", muted)
+        chipsLeft = x
     }
 
     /** Settings button: a 44dp round button with a drawn gear; returns the next pill's end x. */
@@ -228,9 +260,10 @@ class DriveView(ctx: Context, private val actions: Actions) : View(ctx) {
 
     private fun drawCenter(c: Canvas) {
         val cx = width / 2f
-        val top = 70 * d
-        // Output bars.
-        val bh = 96 * d
+        // Portrait leaves room for the telemetry line under the top bar.
+        val top = if (height > width) 92 * d else 70 * d
+        // Output bars shrink so they never run into the speed buttons.
+        val bh = (speedBtns[0].top - top - 40 * d).coerceIn(40 * d, 96 * d)
         bar(c, cx - 80 * d, top, bh, outLeft, "L")
         bar(c, cx + 46 * d, top, bh, outRight, "R")
         // Orientation.

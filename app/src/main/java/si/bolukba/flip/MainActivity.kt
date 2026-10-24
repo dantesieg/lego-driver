@@ -121,6 +121,8 @@ class MainActivity : Activity(), Driver.Ui, DriveView.Actions, InputManager.Inpu
         view.spinning = driver.spinning
         view.outLeft = driver.outLeft
         view.outRight = driver.outRight
+        view.telemetry = driver.telemetry()
+        view.notice = driver.notice
         view.invalidate()
     }
 
