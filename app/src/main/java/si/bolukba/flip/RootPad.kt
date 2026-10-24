@@ -103,7 +103,7 @@ class RootPad(private val ctx: Context, private val driver: Driver) {
             BTN_TL -> driver.spin(-1)
             BTN_TR -> driver.spin(1)
             BTN_EAST -> driver.halt()
-            BTN_WEST -> driver.nextMode()
+            BTN_WEST -> driver.halt()
             BTN_NORTH -> driver.setSpeed((driver.speed + 1) % 3)
         }
     }

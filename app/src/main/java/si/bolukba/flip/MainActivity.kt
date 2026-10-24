@@ -175,8 +175,8 @@ class MainActivity : Activity(), Driver.Ui, DriveView.Actions {
         when (keyCode) {
             KeyEvent.KEYCODE_BUTTON_L1 -> driver.spin(-1)
             KeyEvent.KEYCODE_BUTTON_R1 -> driver.spin(1)
-            KeyEvent.KEYCODE_BUTTON_B -> driver.halt() // Circle
-            KeyEvent.KEYCODE_BUTTON_X -> driver.nextMode() // Square
+            KeyEvent.KEYCODE_BUTTON_B -> driver.halt() // Circle (alias)
+            KeyEvent.KEYCODE_BUTTON_X -> driver.halt() // Square
             KeyEvent.KEYCODE_BUTTON_Y -> driver.setSpeed((driver.speed + 1) % 3) // Triangle
             KeyEvent.KEYCODE_BUTTON_START -> onScan()
             else -> return super.onKeyDown(keyCode, e)
