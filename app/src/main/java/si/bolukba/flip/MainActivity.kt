@@ -77,7 +77,7 @@ class MainActivity : Activity(), Driver.Ui, DriveView.Actions {
         view.battery = driver.battery
         view.rssi = driver.rssi
         view.padName = driver.pad?.let { padLabel(it) }
-        view.arcade = driver.arcade
+        view.modeName = Driver.MODE_NAMES[driver.mode]
         view.speed = driver.speed
         view.flipped = driver.flipped
         view.spinning = driver.spinning
@@ -97,6 +97,8 @@ class MainActivity : Activity(), Driver.Ui, DriveView.Actions {
     override fun onHalt() = driver.halt()
 
     override fun onSpeed(index: Int) = driver.setSpeed(index)
+
+    override fun onMode() = driver.nextMode()
 
     override fun onScan() {
         driver.parked = false
@@ -129,6 +131,7 @@ class MainActivity : Activity(), Driver.Ui, DriveView.Actions {
         }
         if (driver.pad?.id != e.deviceId) driver.findPad()
         driver.lx = axis(e, MotionEvent.AXIS_X)
+        driver.rx = axis(e, MotionEvent.AXIS_Z)
         driver.ly = axis(e, MotionEvent.AXIS_Y)
         driver.ry = axis(e, MotionEvent.AXIS_RZ)
         driver.l2 = max(axis(e, MotionEvent.AXIS_LTRIGGER), axis(e, MotionEvent.AXIS_BRAKE))
@@ -173,7 +176,7 @@ class MainActivity : Activity(), Driver.Ui, DriveView.Actions {
             KeyEvent.KEYCODE_BUTTON_L1 -> driver.spin(-1)
             KeyEvent.KEYCODE_BUTTON_R1 -> driver.spin(1)
             KeyEvent.KEYCODE_BUTTON_B -> driver.halt() // Circle
-            KeyEvent.KEYCODE_BUTTON_X -> driver.toggleArcade() // Square
+            KeyEvent.KEYCODE_BUTTON_X -> driver.nextMode() // Square
             KeyEvent.KEYCODE_BUTTON_Y -> driver.setSpeed((driver.speed + 1) % 3) // Triangle
             KeyEvent.KEYCODE_BUTTON_START -> onScan()
             else -> return super.onKeyDown(keyCode, e)

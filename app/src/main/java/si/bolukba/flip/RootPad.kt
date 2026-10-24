@@ -66,6 +66,7 @@ class RootPad(private val ctx: Context, private val driver: Driver) {
     private fun axis(code: Int, v: Int) {
         when (code) {
             ABS_X -> driver.lx = stick(code, v)
+            ABS_RX -> driver.rx = stick(code, v)
             ABS_Y -> driver.ly = stick(code, v)
             ABS_RY -> driver.ry = stick(code, v)
             ABS_Z, ABS_BRAKE -> driver.l2 = trigger(code, v)
@@ -102,7 +103,7 @@ class RootPad(private val ctx: Context, private val driver: Driver) {
             BTN_TL -> driver.spin(-1)
             BTN_TR -> driver.spin(1)
             BTN_EAST -> driver.halt()
-            BTN_WEST -> driver.toggleArcade()
+            BTN_WEST -> driver.nextMode()
             BTN_NORTH -> driver.setSpeed((driver.speed + 1) % 3)
         }
     }
@@ -128,6 +129,7 @@ class RootPad(private val ctx: Context, private val driver: Driver) {
         private const val ABS_X = 0x00
         private const val ABS_Y = 0x01
         private const val ABS_Z = 0x02
+        private const val ABS_RX = 0x03
         private const val ABS_RY = 0x04
         private const val ABS_RZ = 0x05
         private const val ABS_GAS = 0x09

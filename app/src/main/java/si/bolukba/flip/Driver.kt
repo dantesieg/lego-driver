@@ -29,6 +29,7 @@ class Driver(ctx: Context) : Hub.Listener {
 
     // Gamepad inputs, -1..1 (triggers 0..1).
     var lx = 0f
+    var rx = 0f
     var ly = 0f
     var ry = 0f
     var l2 = 0f
@@ -47,7 +48,8 @@ class Driver(ctx: Context) : Hub.Listener {
     /** Set by a manual disconnect: don't auto-reconnect when the app comes back. */
     var parked = false
 
-    var arcade = prefs.getBoolean("arcade", false)
+    /** Stick layout, one of MODE_*. */
+    var mode = prefs.getInt("mode", if (prefs.getBoolean("arcade", false)) MODE_ARCADE else MODE_TANK)
         private set
     var speed = prefs.getInt("speed", 1)
         private set
@@ -98,16 +100,20 @@ class Driver(ctx: Context) : Hub.Listener {
 
         var left: Float
         var right: Float
-        if (arcade) {
-            val throttle = if (r2 > 0f || l2 > 0f) r2 - l2 else -ly
-            left = throttle + lx
-            right = throttle - lx
+        if (mode == MODE_TANK) {
+            left = -ly
+            right = -ry
+        } else {
+            val (throttle, steer) = when (mode) {
+                MODE_ARCADE -> (if (r2 > 0f || l2 > 0f) r2 - l2 else -ly) to lx
+                MODE_LEFT -> -ly to lx
+                else -> -ry to rx
+            }
+            left = throttle + steer
+            right = throttle - steer
             val m = max(1f, max(abs(left), abs(right)))
             left /= m
             right /= m
-        } else {
-            left = -ly
-            right = -ry
         }
         // D-pad buttons override the sticks: up/down drive, left/right turn.
         val t = (if (dUp || hatY < -0.5f) 1f else 0f) - (if (dDown || hatY > 0.5f) 1f else 0f)
@@ -172,7 +178,7 @@ class Driver(ctx: Context) : Hub.Listener {
 
     /** Zeroes every input so nothing keeps driving after an input source goes away. */
     fun releaseInputs() {
-        lx = 0f; ly = 0f; ry = 0f; l2 = 0f; r2 = 0f; hatX = 0f; hatY = 0f
+        lx = 0f; rx = 0f; ly = 0f; ry = 0f; l2 = 0f; r2 = 0f; hatX = 0f; hatY = 0f
         dUp = false; dDown = false; dLeft = false; dRight = false
         touchLeft = 0f; touchRight = 0f
     }
@@ -184,9 +190,9 @@ class Driver(ctx: Context) : Hub.Listener {
         ui?.onChange()
     }
 
-    fun toggleArcade() {
-        arcade = !arcade
-        prefs.edit().putBoolean("arcade", arcade).apply()
+    fun nextMode() {
+        mode = (mode + 1) % MODE_NAMES.size
+        prefs.edit().putInt("mode", mode).apply()
         rumble(40)
         ui?.onChange()
     }
@@ -238,6 +244,11 @@ class Driver(ctx: Context) : Hub.Listener {
     }
 
     companion object {
+        const val MODE_TANK = 0
+        const val MODE_ARCADE = 1
+        const val MODE_LEFT = 2
+        const val MODE_RIGHT = 3
+        val MODE_NAMES = arrayOf("tank", "arcade", "left stick", "right stick")
         private val SPEEDS = intArrayOf(40, 70, 100)
         private const val SPIN_ADJUST = 55
         private const val TURN_INNER = 0.3f

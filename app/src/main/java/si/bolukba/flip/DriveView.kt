@@ -16,6 +16,7 @@ class DriveView(ctx: Context, private val actions: Actions) : View(ctx) {
         fun onHalt()
         fun onSpeed(index: Int)
         fun onScan()
+        fun onMode()
         fun onConnect()
         fun onDisconnect()
         fun onSliders(left: Float, right: Float)
@@ -29,7 +30,7 @@ class DriveView(ctx: Context, private val actions: Actions) : View(ctx) {
     var battery = -1
     var rssi = 0
     var padName: String? = null
-    var arcade = false
+    var modeName = "tank"
     var flipped = false
     var spinning = false
     var speed = 1
@@ -66,6 +67,7 @@ class DriveView(ctx: Context, private val actions: Actions) : View(ctx) {
     private val scanBtn = RectF()
     private val connectBtn = RectF()
     private val discBtn = RectF()
+    private val modeBtn = RectF()
     private val speedBtns = Array(3) { RectF() }
     private val pointerSlider = HashMap<Int, Int>() // pointer id -> 0 left, 1 right
 
@@ -143,7 +145,10 @@ class DriveView(ctx: Context, private val actions: Actions) : View(ctx) {
         }
         var x = width - 24 * d
         x = chip(c, x, y, if (battery >= 0) "$battery%" else "—", text)
-        x = chip(c, x, y, padName?.let { if (arcade) "$it · arcade" else "$it · tank" } ?: "No controller", if (padName != null) accent else muted)
+        // Controller chip shows the stick layout; tapping it cycles the layout.
+        val right = x
+        x = chip(c, x, y, (if (width > height) (padName ?: "Controller") + " · " else "") + modeName + " ▾", if (padName != null) accent else muted)
+        modeBtn.set(x + 8 * d, y - 22 * d, right, y + 22 * d)
         if (connected && rssi != 0 && width > height) chip(c, x, y, "$rssi dBm", muted)
     }
 
@@ -277,6 +282,7 @@ class DriveView(ctx: Context, private val actions: Actions) : View(ctx) {
                 }
                 when {
                     discBtn.contains(x, y) -> actions.onDisconnect()
+                    modeBtn.contains(x, y) -> actions.onMode()
                     sliderL.contains(x, y) -> pointerSlider[id] = 0
                     sliderR.contains(x, y) -> pointerSlider[id] = 1
                     spinL.contains(x, y) -> actions.onSpin(-1)
