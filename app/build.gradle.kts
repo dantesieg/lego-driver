@@ -51,6 +51,11 @@ android {
         }
     }
 
+    // evgrab is an executable run via su, so it must be extracted to nativeLibraryDir.
+    packaging {
+        jniLibs { useLegacyPackaging = true }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

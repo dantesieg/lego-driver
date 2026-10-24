@@ -16,6 +16,7 @@ class DriveView(ctx: Context, private val actions: Actions) : View(ctx) {
         fun onHalt()
         fun onSpeed(index: Int)
         fun onScan()
+        fun onSliders(left: Float, right: Float)
     }
 
     // Model, written by MainActivity before invalidate().
@@ -268,6 +269,7 @@ class DriveView(ctx: Context, private val actions: Actions) : View(ctx) {
                     touchLeft = 0f
                     touchRight = 0f
                 }
+                actions.onSliders(touchLeft, touchRight)
                 invalidate()
             }
         }
@@ -281,6 +283,7 @@ class DriveView(ctx: Context, private val actions: Actions) : View(ctx) {
             val v = ((r.centerY() - e.getY(p)) / (r.height() / 2 - 36 * d)).coerceIn(-1f, 1f)
             if (which == 0) touchLeft = v else touchRight = v
         }
+        actions.onSliders(touchLeft, touchRight)
         invalidate()
     }
 }
