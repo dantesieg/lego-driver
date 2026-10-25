@@ -55,6 +55,9 @@ class Hub(private val ctx: Context, var listener: Listener) {
     private val queue = ArrayDeque<ByteArray>()
     private var writing = false
     private var orientationPort = -1
+    /** Virtual port combining both tracks, or -1 until the hub reports it. */
+    private var pairPort = -1
+
     /** Port -> attached device type, from Attached I/O reports. */
     private val portTypes = HashMap<Int, Int>()
     private var ledPort = -1
@@ -109,11 +112,23 @@ class Hub(private val ctx: Context, var listener: Listener) {
         writing = false
         portTypes.clear()
         ledPort = -1
+        pairPort = -1
         setState(State.IDLE, "Disconnected")
     }
 
     /** Track powers in -100..100 as the driver sees them; right-motor inversion is applied here. */
     fun setTracks(left: Int, right: Int) {
+        val vp = pairPort
+        if (vp >= 0) {
+            // One command for both: separate writes start the left track a BLE round-trip early.
+            val l = left.coerceIn(-100, 100).toByte()
+            val r = (-right).coerceIn(-100, 100).toByte()
+            send(if (speedControl && (left != 0 || right != 0))
+                byteArrayOf(0x0A, 0x00, 0x81.toByte(), vp.toByte(), 0x11, 0x08, l, r, 100, 0x00) // StartSpeed(S1, S2)
+            else
+                byteArrayOf(0x08, 0x00, 0x81.toByte(), vp.toByte(), 0x11, 0x02, l, r)) // StartPower(P1, P2)
+            return
+        }
         send(track(PORT_LEFT, left))
         send(track(PORT_RIGHT, -right))
     }
@@ -247,7 +262,11 @@ class Hub(private val ctx: Context, var listener: Listener) {
                     0x02 -> listener.onButton(v[5].toInt() != 0)
                 }
             }
-            0x04 -> if (v.size >= 7 && v[4].toInt() == 0x01) { // attached I/O
+            0x04 -> if (v.size >= 9 && v[4].toInt() == 0x02) { // virtual port attached
+                val a = v[7].toInt() and 0xFF
+                val b = v[8].toInt() and 0xFF
+                if (a == PORT_LEFT && b == PORT_RIGHT) pairPort = v[3].toInt() and 0xFF
+            } else if (v.size >= 7 && v[4].toInt() == 0x01) { // attached I/O
                 val port = v[3].toInt() and 0xFF
                 val type = (v[5].toInt() and 0xFF) or ((v[6].toInt() and 0xFF) shl 8)
                 portTypes[port] = type
@@ -256,7 +275,12 @@ class Hub(private val ctx: Context, var listener: Listener) {
                         orientationPort = port
                         subscribe(port, 0, 1, true)
                     }
-                    TYPE_L_MOTOR -> subscribe(port, 2, 5, true) // absolute position, 5° delta
+                    TYPE_L_MOTOR -> {
+                        subscribe(port, 2, 5, true) // absolute position, 5° delta
+                        // Both tracks present: pair them into a virtual port (P1 = left, P2 = right).
+                        if (portTypes[PORT_LEFT] == TYPE_L_MOTOR && portTypes[PORT_RIGHT] == TYPE_L_MOTOR && pairPort < 0)
+                            send(byteArrayOf(0x06, 0x00, 0x61, 0x01, PORT_LEFT.toByte(), PORT_RIGHT.toByte()))
+                    }
                     TYPE_GESTURE -> subscribe(port, 0, 1, true)
                     TYPE_ACCEL -> if (wantAccel) subscribe(port, 0, 40, true)
                     TYPE_TEMPERATURE -> if (portOf(TYPE_TEMPERATURE) == port) subscribe(port, 0, 5, true)
@@ -278,8 +302,8 @@ class Hub(private val ctx: Context, var listener: Listener) {
                     TYPE_GESTURE -> listener.onGesture(v[4].toInt() and 0xFF)
                     TYPE_ACCEL -> if (v.size >= 10) listener.onAccel(s16(v, 4), s16(v, 6), s16(v, 8))
                     TYPE_TEMPERATURE -> if (v.size >= 6) listener.onTemperature(s16(v, 4) / 10f)
-                    TYPE_CURRENT -> if (v.size >= 6) listener.onCurrent(s16(v, 4))
-                    TYPE_VOLTAGE -> if (v.size >= 6) listener.onVoltage(s16(v, 4))
+                    TYPE_CURRENT -> if (v.size >= 6) listener.onCurrent(s16(v, 4) * 4175 / 4095) // raw 0..4095 = 0..4175 mA
+                    TYPE_VOLTAGE -> if (v.size >= 6) listener.onVoltage(s16(v, 4) * 9615 / 4095) // raw 0..4095 = 0..9.615 V
                 }
             }
         }

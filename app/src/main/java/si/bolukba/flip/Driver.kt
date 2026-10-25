@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Log
 import android.view.InputDevice
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -92,6 +93,7 @@ class Driver(ctx: Context) : Hub.Listener {
     private var spinTarget = 180
     private var spinTurned = 0
     private var spinStartMs = 0L
+    private var spinSettle = 0
     private val haptics = Haptics()
     private val extras = PadExtras()
     private var bothTriggers = false
@@ -104,6 +106,12 @@ class Driver(ctx: Context) : Hub.Listener {
     private var accelEma = 0f
     private var lastBumpMs = 0L
     private var lastHubLed = -1
+    private var holdYaw = Int.MIN_VALUE
+    private var holdStartMs = 0L
+    private var holdI = 0f
+    private var yawRate = 0f // deg/s, smoothed
+    private var lastYawMs = 0L
+    private var lastHoldLog = 0L
 
     init {
         findPad()
@@ -129,8 +137,8 @@ class Driver(ctx: Context) : Hub.Listener {
         updateSpeed(now)
 
         if (spinDir != 0) {
-            // Stop early to absorb coast-on overshoot (the original uses 180 - 50..65).
-            val adjust = min(SPIN_ADJUST.toFloat(), spinTarget * 0.3f)
+            // Stop early to absorb the ~35-40° the vehicle coasts after braking (measured at full power).
+            val adjust = min(SPIN_ADJUST.toFloat(), spinTarget * 0.5f)
             if (abs(spinTurned) < spinTarget - adjust && now - spinStartMs < 6000) {
                 if (hapticOn(H_ENGINE)) haptics.engine(100, -100)
                 checkStall(now, 100, 100)
@@ -138,6 +146,11 @@ class Driver(ctx: Context) : Hub.Listener {
             }
             spinDir = 0
             hub.brake()
+            val target = spinTarget
+            cal("spin stop target=$target turned=$spinTurned yaw=$yaw")
+            val before = spinTurned
+            main.postDelayed({ cal("spin settle target=$target stopAt=$before final=$spinSettle") }, 1500)
+            spinSettle = spinTurned
             if (hapticOn(H_SPIN)) haptics.pulse(50, 160)
             lastL = Int.MIN_VALUE
             lastR = Int.MIN_VALUE
@@ -174,8 +187,33 @@ class Driver(ctx: Context) : Hub.Listener {
             right = -left
             left = a
         }
+        // Heading hold: while driving straight, steer back to the yaw captured when straight began.
+        // Captured shortly after launch so any start twitch isn't fought.
+        if (flag(F_HEADING) && left != 0f && abs(left - right) < 0.08f) {
+            if (holdStartMs == 0L) holdStartMs = now
+            if (holdYaw == Int.MIN_VALUE && now - holdStartMs >= HOLD_ENGAGE_MS) holdYaw = yaw
+        } else {
+            holdYaw = Int.MIN_VALUE
+            holdStartMs = 0L
+            holdI = 0f
+        }
+        if (holdYaw != Int.MIN_VALUE) {
+            val e = angleDiff(yaw, holdYaw)
+            // 1° deadband: yaw is whole degrees, and chasing ±1 was the constant small weave.
+            val err = if (abs(e) <= 1) 0 else e - Integer.signum(e)
+            // Slow integral removes the steady 1-3° offset P alone leaves.
+            holdI = (holdI + err * HOLD_I * 0.016f).coerceIn(-0.15f, 0.15f)
+            val corr = ((err * HOLD_GAIN + holdI + yawRate * HOLD_DAMP) * HOLD_SIGN).coerceIn(-HOLD_MAX, HOLD_MAX)
+            left -= corr
+            right += corr
+            if (now - lastHoldLog > 250) {
+                lastHoldLog = now
+                cal("hold err=$e rate=%.0f corr=%.2f l=%.2f r=%.2f flipped=$flipped".format(yawRate, corr, left, right))
+            }
+        }
         val scale = SPEEDS[speed]
-        val ramp = RAMP_MS[option(O_RAMP)]
+        // Heading hold gets a short launch ramp so starts stay smooth.
+        val ramp = max(RAMP_MS[option(O_RAMP)], if (flag(F_HEADING)) HOLD_RAMP_MS else 0)
         val step = if (ramp == 0) 200f else ceil(100f * 16f / ramp)
         curL = slew(curL, left * scale, step)
         curR = slew(curR, right * scale, step)
@@ -199,7 +237,8 @@ class Driver(ctx: Context) : Hub.Listener {
                 MODE_LEFT -> -ly to lx
                 else -> -ry to rx
             }
-            if (flag(F_TILT)) steer = extras.tilt
+            // Tilt only steers while throttling, so a resting hand angle never spins the vehicle.
+            if (flag(F_TILT)) steer = if (throttle != 0f) extras.tilt else 0f
             left = throttle + steer
             right = throttle - steer
             val m = max(1f, max(abs(left), abs(right)))
@@ -275,6 +314,10 @@ class Driver(ctx: Context) : Hub.Listener {
         if (speedSampleMs != 0L) speedDegS = (distDeg - speedSampleDeg) / dt
         speedSampleMs = now
         speedSampleDeg = distDeg
+        if (outLeft != 0 || outRight != 0)
+            cal("drive out=$outLeft/$outRight pos0=${pos[0]} pos1=${pos[1]} dist=$distDeg degS=%.0f yaw=$yaw mA=$currentMa mV=$voltageMv".format(speedDegS) +
+                " | mode=$mode lx=$lx ly=$ly rx=$rx ry=$ry l2=$l2 r2=$r2 hat=$hatX,$hatY d=$dUp$dDown$dLeft$dRight tilt=${extras.tilt} touch=$touchLeft,$touchRight")
+        else if (now % 5000 < 500) cal("idle mA=$currentMa mV=$voltageMv temp=$tempC bat=$battery")
         if (flag(F_TELEMETRY)) ui?.onChange()
     }
 
@@ -286,6 +329,7 @@ class Driver(ctx: Context) : Hub.Listener {
         spinDir = dir
         spinTarget = TURN_ANGLES[option(O_TURN)]
         spinTurned = 0
+        cal("spin start dir=$dir target=$spinTarget yaw=$yaw")
         spinStartMs = SystemClock.uptimeMillis()
         // Same raw sign on both ports = pivot turn, as the original app does.
         hub.setRaw(dir * 100, dir * 100)
@@ -399,16 +443,17 @@ class Driver(ctx: Context) : Hub.Listener {
 
     // ---- Lights ----------------------------------------------------------------------------
 
+    // Saturated colours: LED mixes with any blue in them read as teal on the DualSense.
     private fun stateColor(choice: Int): Int = when (choice) {
         LIGHT_BATTERY -> when {
             battery < 0 -> 0xFFFFFF
-            battery > 50 -> 0x00C853
-            battery > 20 -> 0xFFAB00
-            else -> 0xFF1744
+            battery > 50 -> 0x00FF00
+            battery > 20 -> 0xFF8000
+            else -> 0xFF0000
         }
-        LIGHT_SPEED -> intArrayOf(0x00C853, 0xFFC93C, 0xFF1744)[speed]
-        LIGHT_ORIENTATION -> if (flipped) 0xFF6D00 else 0x2979FF
-        LIGHT_LAYOUT -> intArrayOf(0x2979FF, 0xAA00FF, 0x00C853, 0x00B8D4)[mode]
+        LIGHT_SPEED -> intArrayOf(0x00FF00, 0xFF8000, 0xFF0000)[speed]
+        LIGHT_ORIENTATION -> if (flipped) 0xFF4000 else 0x0000FF
+        LIGHT_LAYOUT -> intArrayOf(0x0000FF, 0xA000FF, 0x00FF00, 0x00FFFF)[mode]
         else -> 0
     }
 
@@ -471,7 +516,11 @@ class Driver(ctx: Context) : Hub.Listener {
     }
 
     override fun onOrientation(yaw: Int, pitch: Int, roll: Int) {
-        if (spinDir != 0) spinTurned += angleDiff(yaw, this.yaw)
+        val d = angleDiff(yaw, this.yaw)
+        val t = SystemClock.uptimeMillis()
+        if (lastYawMs != 0L && t > lastYawMs) yawRate += (d * 1000f / (t - lastYawMs) - yawRate) * 0.25f
+        lastYawMs = t
+        if (spinDir != 0) spinTurned += d else spinSettle += d
         this.yaw = yaw
         // App flips at |roll| > 90 with no hysteresis; add a band so it does not chatter at 90.
         val now = if (flipped) abs(roll) > 80 else abs(roll) > 100
@@ -511,8 +560,10 @@ class Driver(ctx: Context) : Hub.Listener {
     }
 
     override fun onGesture(code: Int) {
-        // Low sensitivity relies on the accelerometer only.
-        if (code > 0 && option(O_BUMP) > 0) bump(if (code >= 2) 255 else 180)
+        cal("gesture code=$code")
+        // Measured: 1 = tap, 2 = knock, 4 = hard impact. Low = impacts, Medium = + knocks, High = + taps.
+        val min = intArrayOf(4, 2, 1)[option(O_BUMP)]
+        if (code >= min) bump(if (code >= 4) 255 else if (code >= 2) 200 else 150)
     }
 
     override fun onAccel(x: Int, y: Int, z: Int) {
@@ -520,7 +571,9 @@ class Driver(ctx: Context) : Hub.Listener {
         if (accelEma == 0f) accelEma = mag
         val dev = abs(mag - accelEma) / max(accelEma, 1f)
         accelEma += (mag - accelEma) * 0.05f
-        if (dev > BUMP_THRESHOLD[option(O_BUMP)]) bump((120 + dev * 150).toInt().coerceAtMost(255))
+        if (dev > 0.25f) cal("accel x=$x y=$y z=$z mag=%.0f dev=%.2f".format(mag, dev))
+        // Driving shake reaches ~0.35 and crashes ~0.45, so the accelerometer only backs up High.
+        if (option(O_BUMP) == 2 && dev > 0.42f) bump((120 + dev * 150).toInt().coerceAtMost(255))
     }
 
     private fun bump(amp: Int) {
@@ -576,7 +629,6 @@ class Driver(ctx: Context) : Hub.Listener {
 
         private val TURN_ANGLES = intArrayOf(45, 90, 180, 360)
         private val RAMP_MS = intArrayOf(0, 250, 500, 900)
-        private val BUMP_THRESHOLD = floatArrayOf(1.2f, 0.8f, 0.5f)
 
         val O_TURN = Choice("o_turn", "Turn buttons (L1 / R1, Spin)", listOf("45°", "90°", "180°", "360°"), 2)
         val O_HUB_LIGHT = Choice("o_hub_light", "Hub light shows", LIGHT_OPTIONS, LIGHT_BATTERY)
@@ -590,7 +642,8 @@ class Driver(ctx: Context) : Hub.Listener {
         val F_STALL = Toggle("f_stall", "Stall protection", "Cut power when a track is blocked", true)
         val F_TELEMETRY = Toggle("f_telemetry", "Show telemetry", "Temperature, current, voltage, speed, distance", true)
         val F_TILT = Toggle("f_tilt", "Tilt to steer", "Tilt the controller to steer (not in tank layout)", false)
-        val TOGGLES = listOf(F_SPEED_CONTROL, F_STALL, F_TELEMETRY, F_TILT)
+        val F_HEADING = Toggle("f_heading", "Heading hold", "Keep driving straight using the hub's gyro", false)
+        val TOGGLES = listOf(F_SPEED_CONTROL, F_STALL, F_TELEMETRY, F_TILT, F_HEADING)
 
         const val H_ENGINE = "h_engine"
         const val H_CONNECT = "h_connect"
@@ -615,7 +668,15 @@ class Driver(ctx: Context) : Hub.Listener {
             H_LAYOUT to "Layout change (1–4 ticks)",
         )
         private val SPEEDS = intArrayOf(40, 70, 100)
-        private const val SPIN_ADJUST = 55
+        private const val SPIN_ADJUST = 40
+        private const val HOLD_GAIN = 0.015f // per degree of drift
+        private const val HOLD_DAMP = 0.0005f // per deg/s of yaw rate
+        private const val HOLD_MAX = 0.25f
+        private const val HOLD_RAMP_MS = 350
+        private const val HOLD_ENGAGE_MS = 250L
+        private const val HOLD_I = 0.01f // per degree-second
+        /** Which way yaw grows relative to left-faster; flip if hold makes drift worse. */
+        private const val HOLD_SIGN = -1f
         private const val TURN_INNER = 0.3f
         private const val STALL_MIN_POWER = 30
         private const val STALL_MS = 1200L
@@ -631,6 +692,8 @@ class Driver(ctx: Context) : Hub.Listener {
         fun isPad(dev: InputDevice?) = dev != null &&
             (dev.sources and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
                 dev.sources and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK)
+
+        private fun cal(msg: String) = Log.d("FlipCal", msg)
 
         private fun angleDiff(a: Int, b: Int): Int {
             var x = (a - b) % 360

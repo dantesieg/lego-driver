@@ -2,6 +2,7 @@ package si.bolukba.flip
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.hardware.input.InputManager
@@ -162,6 +163,14 @@ class MainActivity : Activity(), Driver.Ui, DriveView.Actions, InputManager.Inpu
         driver.parked = true
         driver.halt()
         driver.hub.stop()
+    }
+
+    override fun onPowerOff() {
+        AlertDialog.Builder(this)
+            .setMessage("Turn the hub off? Press its button to turn it on again.")
+            .setPositiveButton("Turn off") { _, _ -> driver.powerOffHub() }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     // ---- Gamepad (foreground) --------------------------------------------------------------

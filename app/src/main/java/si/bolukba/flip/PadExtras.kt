@@ -73,6 +73,6 @@ class PadExtras {
 
     companion object {
         private const val TILT_FULL_DEG = 40f
-        private const val TILT_DEAD = 0.12f
+        private const val TILT_DEAD = 0.25f
     }
 }

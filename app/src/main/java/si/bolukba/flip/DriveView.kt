@@ -20,6 +20,7 @@ class DriveView(ctx: Context, private val actions: Actions) : View(ctx) {
         fun onSettings()
         fun onConnect()
         fun onDisconnect()
+    fun onPowerOff()
         fun onSliders(left: Float, right: Float)
     }
 
@@ -71,6 +72,7 @@ class DriveView(ctx: Context, private val actions: Actions) : View(ctx) {
     private val scanBtn = RectF()
     private val connectBtn = RectF()
     private val discBtn = RectF()
+    private val offBtn = RectF()
     private val modeBtn = RectF()
     private val gearBtn = RectF()
     private val speedBtns = Array(3) { RectF() }
@@ -99,7 +101,7 @@ class DriveView(ctx: Context, private val actions: Actions) : View(ctx) {
             scanBtn.set(cx - 90 * d, connectBtn.bottom + 12 * d, cx + 90 * d, connectBtn.bottom + 64 * d)
             return
         }
-        val top = 64 * d
+        val top = 116 * d // below the Turn off pill
         sliderL.set(pad, top, pad + sw, h - pad)
         sliderR.set(w - pad - sw, top, w - pad, h - pad)
         val bw = 120 * d
@@ -138,7 +140,7 @@ class DriveView(ctx: Context, private val actions: Actions) : View(ctx) {
         if (width > height && mono.measureText(t) <= gapR - gapL) {
             c.drawText(t, (gapL + gapR) / 2, 36 * d + 4 * d, mono)
         } else {
-            c.drawText(t, width / 2f, 76 * d, mono)
+            c.drawText(t, width / 2f, 124 * d, mono)
         }
     }
 
@@ -172,8 +174,15 @@ class DriveView(ctx: Context, private val actions: Actions) : View(ctx) {
             fill.color = good
             c.drawCircle(discBtn.left + 18 * d, y, 5 * d, fill)
             c.drawText("Disconnect", discBtn.left + 32 * d, y + 5 * d, label)
+            offBtn.set(discBtn.left, discBtn.bottom + 8 * d, discBtn.right, discBtn.bottom + 48 * d)
+            fill.color = raised
+            c.drawRoundRect(offBtn, 20 * d, 20 * d, fill)
+            fill.color = danger
+            c.drawCircle(offBtn.left + 18 * d, offBtn.centerY(), 5 * d, fill)
+            c.drawText("Turn off hub", offBtn.left + 32 * d, offBtn.centerY() + 5 * d, label)
         } else {
             discBtn.setEmpty()
+            offBtn.setEmpty()
             c.drawText("Flip Driver", 44 * d, y + 5 * d, label)
         }
         var x = width - 24 * d
@@ -261,7 +270,7 @@ class DriveView(ctx: Context, private val actions: Actions) : View(ctx) {
     private fun drawCenter(c: Canvas) {
         val cx = width / 2f
         // Portrait leaves room for the telemetry line under the top bar.
-        val top = if (height > width) 92 * d else 70 * d
+        val top = if (height > width) 136 * d else 70 * d
         // Output bars shrink so they never run into the speed buttons.
         val bh = (speedBtns[0].top - top - 40 * d).coerceIn(40 * d, 96 * d)
         bar(c, cx - 80 * d, top, bh, outLeft, "L")
@@ -343,6 +352,7 @@ class DriveView(ctx: Context, private val actions: Actions) : View(ctx) {
                 }
                 when {
                     discBtn.contains(x, y) -> actions.onDisconnect()
+                    offBtn.contains(x, y) -> actions.onPowerOff()
                     modeBtn.contains(x, y) -> actions.onMode()
                     sliderL.contains(x, y) -> pointerSlider[id] = 0
                     sliderR.contains(x, y) -> pointerSlider[id] = 1
